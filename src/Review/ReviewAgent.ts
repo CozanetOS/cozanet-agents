@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface ReviewResult {
   approved: boolean;
@@ -83,4 +84,23 @@ export class ReviewAgent extends BaseAgent {
     console.log(`[${this.id}] Auditing ${target} (${scope})`);
     return { target, scope, findings: ['No critical issues found'], passed: true };
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: AEGIS domain (architecture review)) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('AEGIS');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

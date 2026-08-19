@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface AnalyticsReport {
   metrics: Record<string, number>;
@@ -96,4 +97,23 @@ export class AnalyticsAgent extends BaseAgent {
     console.log(`[${this.id}] Exporting as ${format}`);
     return { format, path: `/tmp/analytics-export-${Date.now()}.${format}` };
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Company + Strategic Intelligence) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Cozanet Company');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

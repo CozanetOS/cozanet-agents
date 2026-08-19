@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface PlanStep {
   description: string;
@@ -124,4 +125,23 @@ export class PlannerAgent extends BaseAgent {
     const priorityOrder = { critical: 0, high: 1, normal: 2, low: 3 };
     return [...steps].sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Personal + Strategic Intelligence) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Personal');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

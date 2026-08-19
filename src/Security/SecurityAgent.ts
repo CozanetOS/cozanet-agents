@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface SecurityScanResult {
   target: string;
@@ -83,4 +84,23 @@ export class SecurityAgent extends BaseAgent {
     console.log(`[${this.id}] Rotating keys for ${service}`);
     return { service, rotated: true, newKeyId: `key:${Date.now()}` };
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Security + AEGIS (wallet security)) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Security');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

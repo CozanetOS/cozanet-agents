@@ -49,3 +49,5 @@ export * from './Automation/AutomationAgent';
 
 // Master Context — user's durable operating context (v0.2.0 — new)
 export * from './context/MasterContextLoader';
+export * from './context/ContextManager';
+export * from './context/ContextAwareAgent';

@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface ResearchResult {
   topic: string;
@@ -76,4 +77,23 @@ export class ResearchAgent extends BaseAgent {
     // Placeholder — would use LLM to suggest related areas
     return [`${topic} — recent developments`, `${topic} — best practices`, `${topic} — common pitfalls`];
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Research + Funding domains) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Research');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

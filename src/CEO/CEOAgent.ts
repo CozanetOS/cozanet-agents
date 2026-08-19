@@ -1,6 +1,7 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask, AgentCapability } from '../types';
 import { AgentRegistry } from '../AgentRegistry';
+import { ContextManager } from '../context/ContextManager';
 
 /**
  * CEOAgent — top-level orchestrator that plans, delegates, and coordinates.
@@ -104,4 +105,28 @@ export class CEOAgent extends BaseAgent {
       result: r.status === 'fulfilled' ? r.value : (r as PromiseRejectedResult).reason?.message,
     }));
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading) ────────────────────────
+  private context: string | null = null;
+
+  /**
+   * Load minimal context across all domains (orchestrator needs awareness of everything).
+   * Uses loadMinimalContext to avoid loading the full 60K document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      const domains = ContextManager.listDomains();
+      const parts: string[] = [];
+      for (const d of domains) {
+        parts.push(ContextManager.loadMinimalContext(d));
+      }
+      this.context = parts.join('\n\n---\n\n');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

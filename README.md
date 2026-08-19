@@ -831,6 +831,132 @@ interface AgentEvent {
 
 ---
 
+
+---
+
+## Context System (v0.2.0)
+
+CozanetOS agents don't load the entire 60K master context document into every model call.
+Instead, they use **domain-aware smart context loading** — pulling only the relevant sections
+for the current task.
+
+This implements Section 58 of the Cozanet OS Build Specification:
+> "Do not send all memory to the model. For an AEGIS wallet task, load AEGIS constitution,
+> wallet architecture, current task, relevant code, relevant decisions, relevant tests.
+> Do not load unrelated trading history."
+
+### Architecture
+
+```
+User Message → detectDomain() → loadDomainContext() → Relevant Sections Only → Agent
+                                                      (NOT full 60K document)
+```
+
+### Components
+
+#### MasterContextLoader (`src/context/MasterContextLoader.ts`)
+Programmatic access to the 60K master context document (`context/MASTER_CONTEXT.md`).
+
+```typescript
+import { MasterContextLoader } from '@cozanet/agents';
+
+// Load the full document (cached)
+const full = MasterContextLoader.load();
+
+// Get a specific section by heading keyword
+const aegis = MasterContextLoader.getSection('AEGIS');
+
+// Search across all sections
+const results = MasterContextLoader.search('Vault Engine');
+
+// Get confirmed architecture decisions
+const decisions = MasterContextLoader.getArchitectureDecisions();
+
+// Get the 15-principle AI constitution
+const constitution = MasterContextLoader.getConstitution();
+
+// Check if a proposal conflicts with architecture
+const conflicts = MasterContextLoader.checkArchitectureConflict('use HMAC wallet derivation');
+// → ['Conflicts with decision: Vault Engine is preferred — remove HMAC wallet derivation from UI.']
+```
+
+#### ContextManager (`src/context/ContextManager.ts`)
+Domain-aware smart context loader. Loads only relevant sections per domain.
+
+```typescript
+import { ContextManager } from '@cozanet/agents';
+
+// Load context for a specific domain (NOT the full 60K doc)
+const aegisContext = ContextManager.loadDomainContext('AEGIS');
+
+// Load minimal context (system prompt + 2 critical sections)
+const quickContext = ContextManager.loadMinimalContext('Trading');
+
+// Load domain context + extra task-specific sections
+const taskContext = ContextManager.loadTaskContext('AEGIS', ['SECURITY HISTORY']);
+
+// Detect domain from user message
+const domain = ContextManager.detectDomain('check the wallet balance');
+// → 'AEGIS'
+
+// List all domains
+ContextManager.listDomains();
+// → ['Personal', 'Cozanet Company', 'AEGIS', 'Cozanet AI', 'Trading',
+//    'Research', 'Engineering', 'Security', 'Funding', 'Strategic Intelligence']
+```
+
+#### ContextAwareAgent (`src/context/ContextAwareAgent.ts`)
+Base class for agents that need context awareness with lazy loading.
+
+```typescript
+import { ContextAwareAgent } from '@cozanet/agents';
+
+class MyAgent extends ContextAwareAgent {
+  constructor() {
+    super('AEGIS');  // Set the domain
+  }
+
+  doWork() {
+    const context = this.getContext();  // Lazy-loads AEGIS domain context
+    // Use context for reasoning...
+  }
+}
+```
+
+### Domains
+
+| Domain | Description | Key Context Sections |
+|--------|-------------|---------------------|
+| Personal | Identity, goals, preferences, working style | Constitution, Priorities, Identity |
+| Cozanet Company | Company info, ecosystem, CZN token | Cozanet, Business Dev, Africa Market |
+| AEGIS | Financial infra, smart routing, Vault Engine | AEGIS, Architecture, Wallet, Identity Engine |
+| Cozanet AI | Agentic AI product, agent framework | Cozanet AI, Model Philosophy, Provider Agnosticism |
+| Trading | SMC, FVG, liquidity zones, order blocks | Trading, Trading AI Role |
+| Research | Research workflows, source tracking | Search & Research, Anti-Repetition |
+| Engineering | GitHub-first dev, deployments, testing | Build Env, GitHub, Supabase, Deployments |
+| Security | Security rules, secrets, wallet security | Security History, AI Construction Rules |
+| Funding | Grants, hackathons, accelerators | Funding Reality, BNB Chain, Stellar |
+| Strategic Intelligence | Competitive intel, market trends | Strategic Discipline, Priority Hierarchy |
+
+### Agent → Domain Mapping
+
+| Agent | Domain | Why |
+|-------|--------|-----|
+| CEOAgent | All (minimal) | Orchestrator needs awareness of every domain |
+| ResearchAgent | Research | Research workflows + source verification |
+| CodingAgent | Engineering | GitHub-first development + build tools |
+| MemoryAgent | Personal | Identity, decisions, personal context |
+| PlannerAgent | Personal | Goals, priorities, personal planning |
+| SecurityAgent | Security | Security rules, wallet security, AEGIS architecture |
+| ReviewAgent | AEGIS | Architecture review against AEGIS constitution |
+| TestingAgent | Engineering | Test execution, build verification |
+| AnalyticsAgent | Cozanet Company | Company metrics, strategic intelligence |
+| AutomationAgent | Personal | Scheduled task context, personal automation |
+
+All agents use **lazy loading** — context is only loaded when `getContext()` is called,
+not at construction time. Call `refreshContext()` to force a reload.
+
+
 ## License
 
 Apache 2.0 — © CozanetOS

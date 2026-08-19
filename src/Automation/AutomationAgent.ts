@@ -4,6 +4,7 @@ import { SchedulerAgent, ScheduledJob } from '../Scheduler/SchedulerAgent';
 import { WorkflowAgent, WorkflowDef } from '../Workflow/WorkflowAgent';
 import { AgentRegistry } from '../AgentRegistry';
 import { AutonomousRunner, AutonomousGoal, ProgressReport, AutonomousConfig } from '../Runner/AutonomousRunner';
+import { ContextManager } from '../context/ContextManager';
 
 export interface AutomationRule {
   id: string;
@@ -473,4 +474,23 @@ export class AutomationAgent extends BaseAgent {
     }
     this.timers.clear();
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Personal domain (for scheduled tasks)) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Personal');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface TestResult {
   total: number;
@@ -78,4 +79,23 @@ export class TestingAgent extends BaseAgent {
     console.log(`[${this.id}] Benchmarking ${iterations} iterations`);
     return { avgMs: 0.5, minMs: 0.3, maxMs: 1.2, iterations };
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Engineering domain) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Engineering');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }

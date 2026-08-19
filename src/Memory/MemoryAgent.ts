@@ -1,5 +1,6 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
+import { ContextManager } from '../context/ContextManager';
 
 export interface MemoryStoreResult {
   key: string;
@@ -299,4 +300,23 @@ export class MemoryAgent extends BaseAgent {
       mostAccessed: mostAccessed ? { key: mostAccessed.key, accessCount: mostAccessed.accessCount } : null,
     };
   }
+
+  // ── Domain Context (v0.2.0 — lazy loading: Personal domain (identity/decisions)) ────────────────
+  private context: string | null = null;
+
+  /**
+   * Load domain-specific context. Lazy-loads only relevant sections,
+   * NOT the full 60K master context document.
+   */
+  public getContext(): string {
+    if (!this.context) {
+      this.context = ContextManager.loadDomainContext('Personal');
+    }
+    return this.context;
+  }
+
+  public refreshContext(): void {
+    this.context = null;
+  }
+
 }
