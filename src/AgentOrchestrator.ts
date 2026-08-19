@@ -34,6 +34,9 @@ import { IntegrationAgent } from './Integration/IntegrationAgent';
 // Automation & worker system
 import { AutomationAgent } from './Automation/AutomationAgent';
 
+// Phase 3 — GitHub Engine
+import { GitHubAgent } from './GitHub/GitHubAgent';
+
 /**
  * AgentOrchestrator — central coordinator for all CozanetOS agents.
  *
@@ -91,6 +94,8 @@ export class AgentOrchestrator {
       new IntegrationAgent(),
       // Automation & worker
       new AutomationAgent(),
+      // Phase 3 — GitHub Engine
+      new GitHubAgent(),
     ];
 
     for (const agent of allAgents) {
