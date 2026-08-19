@@ -72,3 +72,8 @@ export * from './AEGIS/AegisConstitution';
 export * from './AEGIS/AegisEngineer';
 export * from './AEGIS/SecurityChecker';
 export * from './AEGIS/types';
+
+// Phase 5 — Cozanet Intelligence (v0.2.4 — new)
+export * from './Intelligence/CozanetRadar';
+export * from './Intelligence/DailyBriefGenerator';
+export * from './Intelligence/types';
