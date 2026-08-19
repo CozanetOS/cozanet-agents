@@ -9,6 +9,10 @@ export * from './base/BaseAgent';
 export * from './AgentRegistry';
 export * from './AgentOrchestrator';
 
+// TaskRunner — visible command windows + background execution (v0.2.0 — new)
+export * from './Runner/types';
+export * from './Runner/TaskRunner';
+
 // Core agents (v0.1.0 — upgraded)
 export * from './CEO/CEOAgent';
 export * from './Research/ResearchAgent';

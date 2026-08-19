@@ -16,6 +16,7 @@ This is not a chatbot library. Each agent is a **worker** — it registers capab
 - [Quick Start](#quick-start)
 - [Architecture](#architecture)
 - [Core Infrastructure](#core-infrastructure)
+- [TaskRunner — Visible Command Windows](#taskrunner--visible-command-windows)
 - [Agent Registry (23 Agents)](#agent-registry-23-agents)
   - [Core Agents](#core-agents)
   - [Cognitive Agents](#cognitive-agents)
@@ -71,7 +72,34 @@ const researchResult = await orchestrator.delegate({
 const health = orchestrator.getHealthReport();
 // [{ id: 'agent:ceo', status: 'healthy', uptime: 45000, tasksCompleted: 12, ... }, ...]
 
-// 5. Shutdown
+// 5. Run a visible command — shows real-time output, auto-dismisses when done
+const cmdHandle = orchestrator.runVisibleCommand('git status');
+// A terminal window appears in the app showing output...
+// ...when the command finishes, the window disappears after 3s
+
+// 6. Open a visible browser — you can watch the agent click & navigate
+const browserHandle = orchestrator.openVisibleBrowser('https://example.com');
+// A browser window appears in the app...
+// The agent can click, type, and extract data — all visible to you
+
+// 7. Background tasks run even when you're not watching
+await orchestrator.submitBackground({
+  id: 'bg-1',
+  agentId: 'agent:email',
+  type: 'triage',
+  input: { messages: [] },
+  status: 'pending',
+  priority: 'low',
+  createdAt: Date.now(),
+  retries: 0,
+  maxRetries: 3,
+});
+
+// 8. Get visible windows — the UI renders these as floating panels
+const windows = orchestrator.getVisibleWindows();
+// [{ id: 'win:...', kind: 'command', status: 'running', output: [...] }, ...]
+
+// 9. Shutdown
 await orchestrator.shutdown();
 ```
 
@@ -127,10 +155,17 @@ Central coordinator. Manages task submission, delegation, parallel execution, an
 | Method | Description |
 |---|---|
 | `initialize()` | Boots all 23 agents, wires event forwarding |
-| `submitTask(task)` | Submit a task — resolves with `TaskResult` |
+| `submitTask(task, options?)` | Submit a task — creates a visible command window, auto-dismisses when done |
+| `submitBackground(task)` | Submit a task silently — no visible window, pure background |
 | `enqueueTask(task)` | Add to priority queue (sorted by `critical > high > normal > low`) |
 | `processQueue(maxConcurrent)` | Drain the queue with up to N parallel tasks |
 | `delegate(task)` | Direct delegation to a specific agent (bypasses queue) |
+| `runVisibleCommand(command, options?)` | Run a shell command with a visible terminal window |
+| `openVisibleBrowser(url, options?)` | Open a visible browser session — watch the agent navigate & click |
+| `getVisibleWindows()` | Get all currently visible command windows (for UI rendering) |
+| `getAllWindows()` | Get all windows including background ones |
+| `getRunnerStats()` | TaskRunner stats — active, done, failed, visible counts |
+| `onWindowEvent(handler)` | Subscribe to window events (created, status, log, dismissed) |
 | `getAgentStatus(id)` | Get a single agent's status and stats |
 | `getAllAgentStatuses()` | Get all 23 agents' statuses |
 | `getHealthReport()` | Health snapshot of every agent |
@@ -166,6 +201,162 @@ All 23 agents extend this. Provides the lifecycle, event, health, and task execu
 | `sendMessage(to, message)` | Route a message to another agent |
 | `getStats()` | Uptime, tasks completed/failed, last active |
 | `getStatus()` | Current lifecycle state |
+
+---
+
+
+---
+
+## TaskRunner — Visible Command Windows
+
+The TaskRunner is what makes CozanetOS agents **visible workers**, not invisible background processes. When an agent runs a command, opens a browser, or executes a task, a **command window** pops up showing real-time output. When the task completes, the window auto-dismisses.
+
+### Key Principles
+
+1. **Visible by default** — if you're watching the app, you see what's happening
+2. **Background capable** — if no one's watching, everything still runs server-side
+3. **Auto-dismiss** — windows disappear after completion (configurable: 3s default)
+4. **Browser visibility** — browser sessions can be shown live or run headless
+5. **Cancellable** — any running task can be cancelled mid-flight
+
+### TaskRunner Methods
+
+| Method | Description |
+|---|---|
+| `runCommand(command, options?)` | Run a shell command with a visible terminal window |
+| `runAgentTask(agentId, taskType, input, options?)` | Run an agent task with a visible window |
+| `openBrowser(url, options?)` | Open a browser session — visible or headless |
+| `runWorkflow(workflowId, options?)` | Run a workflow with a visible window |
+| `runApiCall(integrationId, endpoint, method, body?, options?)` | Run an API call with a visible window |
+| `getVisibleWindows()` | Windows the UI should render right now |
+| `getAllWindows()` | All windows including background |
+| `dismissWindow(id)` | Manually dismiss a window |
+| `cancelTask(id)` | Cancel a running task |
+| `getStats()` | { total, active, done, failed, visible } |
+
+### RunOptions
+
+```typescript
+interface RunOptions {
+  visible?: boolean;        // default: true — show the window in the app
+  autoDismiss?: boolean;    // default: true — hide window when done
+  dismissAfterMs?: number;  // default: 3000 — keep window visible for X ms after done
+  backgroundOnly?: boolean; // default: false — if true, never show UI
+  timeoutMs?: number;       // task timeout
+  onLog?: (entry: LogEntry) => void;        // real-time log callback
+  onComplete?: (window: CommandWindow) => void;
+  onStatusChange?: (window: CommandWindow) => void;
+}
+```
+
+### CommandWindow
+
+Each running task creates a `CommandWindow` — this is what the UI renders:
+
+```typescript
+interface CommandWindow {
+  id: string;
+  kind: 'command' | 'browser' | 'agent_task' | 'workflow' | 'api_call';
+  title: string;
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  startedAt: number;
+  finishedAt?: number;
+  output: LogEntry[];        // real-time log stream
+  visible: boolean;          // should the UI show this?
+  autoDismiss: boolean;      // dismiss when done?
+  dismissAfterMs?: number;
+  browserSession?: BrowserSession;  // if kind === 'browser'
+  agentId?: string;
+  taskType?: string;
+}
+```
+
+### BrowserSession
+
+When an agent opens a browser, the session is tracked so the UI can show live activity:
+
+```typescript
+interface BrowserSession {
+  id: string;
+  url: string;
+  visible: boolean;           // true = show in app, false = headless
+  screenshots: { timestamp: number; path: string }[];
+  clicks: { timestamp: number; selector: string; success: boolean }[];
+  typedInputs: { timestamp: number; selector: string; text: string }[];
+  currentUrl: string;
+  status: 'navigating' | 'interactive' | 'idle' | 'closed';
+}
+```
+
+### Example — Visible Browser with Click Tracking
+
+```typescript
+import { AgentOrchestrator } from '@cozanet/agents';
+
+const orchestrator = new AgentOrchestrator();
+await orchestrator.initialize();
+
+// Open a visible browser — you can watch it in the app
+const handle = orchestrator.openVisibleBrowser('https://example.com/login', {
+  headless: false,        // show the browser
+  autoDismiss: false,     // keep it open after done
+});
+
+// The agent can now navigate, click, and type — all visible
+// Each action is logged in the command window:
+// 🌐 Opening browser: https://example.com/login
+// 🔗 Navigated to: https://example.com/login
+// ⌨️ Type: "david@cozanet.os" → #email
+// 🖱️ Click: #submit-btn ✓
+// 📸 Screenshot saved
+
+// Get the window to see all activity
+const win = handle.getWindow();
+console.log(win.browserSession.clicks);  // [{ selector: '#submit-btn', success: true }, ...]
+console.log(win.output);                   // [{ level: 'info', message: '🖱️ Click: ...' }, ...]
+```
+
+### Example — Background Task (No Window)
+
+```typescript
+// Runs silently — no visible window, but still executes
+await orchestrator.submitBackground({
+  id: 'bg-triage',
+  agentId: 'agent:email',
+  type: 'triage',
+  input: { messages: emailList },
+  status: 'pending',
+  priority: 'low',
+  createdAt: Date.now(),
+  retries: 0,
+  maxRetries: 3,
+});
+
+// Even if you close the app, this runs on the server
+```
+
+### Event Streaming
+
+The TaskRunner emits events for real-time UI updates:
+
+```typescript
+orchestrator.onWindowEvent((eventType, window) => {
+  switch (eventType) {
+    case 'window:created':
+      // New window appeared — render it in the UI
+      break;
+    case 'window:status':
+      // Status changed (running → done, etc.)
+      break;
+    case 'window:log':
+      // New log line — append to the window's output panel
+      break;
+    case 'window:dismissed':
+      // Window disappeared — remove from UI
+      break;
+  }
+});
+```
 
 ---
 

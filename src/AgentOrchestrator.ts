@@ -1,6 +1,8 @@
 import { AgentRegistry } from './AgentRegistry';
 import { BaseAgent } from './base/BaseAgent';
 import { AgentTask, Agent, TaskResult, TaskPriority, AgentEvent, EventHandler } from './types';
+import { TaskRunner } from './Runner/TaskRunner';
+import { RunOptions, CommandWindow, RunHandle } from './Runner/types';
 
 // Core agents
 import { CEOAgent } from './CEO/CEOAgent';
@@ -43,12 +45,21 @@ import { AutomationAgent } from './Automation/AutomationAgent';
  *  - Retry logic with exponential backoff
  *  - Event observation
  *  - Health monitoring
+ *  - TaskRunner integration — every task gets a visible command window
+ *    that shows real-time output and auto-dismisses when done
  */
 export class AgentOrchestrator {
   private registry = AgentRegistry.getInstance();
   private taskQueue: AgentTask[] = [];
   private running = false;
   private eventHandlers: EventHandler[] = [];
+
+  /** TaskRunner — manages visible command windows for all running tasks */
+  public runner: TaskRunner;
+
+  constructor() {
+    this.runner = new TaskRunner(this.registry);
+  }
 
   // ── Initialization ──────────────────────────────────────────────────
   public async initialize(): Promise<void> {
@@ -87,10 +98,22 @@ export class AgentOrchestrator {
       agent.on((event) => this.forwardEvent(event));
       agent.start();
     }
+
+    this.running = true;
   }
 
   // ── Task Submission ────────────────────────────────────────────────
-  public async submitTask(task: AgentTask): Promise<TaskResult> {
+
+  /**
+   * Submit a task. By default, a visible command window is created showing
+   * real-time output. The window auto-dismisses when the task completes.
+   *
+   * Pass `visible: false` in options to run silently in the background.
+   */
+  public async submitTask(
+    task: AgentTask,
+    options?: { visible?: boolean; autoDismiss?: boolean; dismissAfterMs?: number }
+  ): Promise<TaskResult> {
     const startTime = Date.now();
 
     const agent = this.registry.get(task.agentId);
@@ -104,8 +127,17 @@ export class AgentOrchestrator {
       };
     }
 
+    // Create a visible window for this task (unless explicitly hidden)
+    const runOptions: RunOptions = {
+      visible: options?.visible ?? true,
+      autoDismiss: options?.autoDismiss ?? true,
+      dismissAfterMs: options?.dismissAfterMs ?? 3000,
+    };
+
+    const handle = this.runner.runAgentTask(task.agentId, task.type, task.input, runOptions);
+
     try {
-      const output = await this.executeWithRetry(agent, task);
+      const output = await handle.promise;
       return {
         taskId: task.id,
         agentId: task.agentId,
@@ -122,6 +154,14 @@ export class AgentOrchestrator {
         durationMs: Date.now() - startTime,
       };
     }
+  }
+
+  /**
+   * Submit a task silently — no visible window, pure background execution.
+   * The task still runs and completes, but nothing shows in the UI.
+   */
+  public async submitBackground(task: AgentTask): Promise<TaskResult> {
+    return this.submitTask(task, { visible: false, autoDismiss: false });
   }
 
   public enqueueTask(task: AgentTask): void {
@@ -149,6 +189,36 @@ export class AgentOrchestrator {
     }
 
     return results;
+  }
+
+  // ── Visible Browser ────────────────────────────────────────────────
+
+  /**
+   * Open a visible browser session. Shows in the app — you can watch the
+   * agent navigate, click, and type in real-time. If no one's watching,
+   * it falls back to headless mode but still records all activity.
+   *
+   * The browser window auto-dismisses when the session is done.
+   */
+  public openVisibleBrowser(url: string, options?: { headless?: boolean; autoDismiss?: boolean }): RunHandle {
+    return this.runner.openBrowser(url, {
+      headless: options?.headless ?? false,
+      autoDismiss: options?.autoDismiss ?? false, // keep browser visible by default
+    });
+  }
+
+  // ── Visible Command ─────────────────────────────────────────────────
+
+  /**
+   * Run a shell command with a visible terminal window.
+   * Shows real-time stdout/stderr, auto-dismisses when done.
+   */
+  public runVisibleCommand(command: string, options?: { autoDismiss?: boolean; dismissAfterMs?: number }): RunHandle {
+    return this.runner.runCommand(command, {
+      visible: true,
+      autoDismiss: options?.autoDismiss ?? true,
+      dismissAfterMs: options?.dismissAfterMs ?? 3000,
+    });
   }
 
   // ── Execution with Retry & Timeout ─────────────────────────────────
@@ -196,6 +266,30 @@ export class AgentOrchestrator {
     return agent.executeTask(task);
   }
 
+  // ── Visible Windows ─────────────────────────────────────────────────
+
+  /**
+   * Get all currently visible command windows.
+   * The UI should render these as floating terminal panels.
+   */
+  public getVisibleWindows(): CommandWindow[] {
+    return this.runner.getVisibleWindows();
+  }
+
+  /**
+   * Get all windows (including background ones).
+   */
+  public getAllWindows(): CommandWindow[] {
+    return this.runner.getAllWindows();
+  }
+
+  /**
+   * Get TaskRunner stats — how many windows are active, done, failed.
+   */
+  public getRunnerStats() {
+    return this.runner.getStats();
+  }
+
   // ── Status & Health ────────────────────────────────────────────────
   public getAgentStatus(id: string): Agent {
     const agent = this.registry.get(id);
@@ -240,6 +334,17 @@ export class AgentOrchestrator {
   // ── Events ─────────────────────────────────────────────────────────
   public onEvent(handler: EventHandler): void {
     this.eventHandlers.push(handler);
+  }
+
+  /**
+   * Subscribe to TaskRunner window events.
+   * Events: 'window:created', 'window:status', 'window:log', 'window:dismissed'
+   */
+  public onWindowEvent(handler: (event: string, window: any) => void): void {
+    this.runner.on('window:created', (w) => handler('window:created', w));
+    this.runner.on('window:status', (w) => handler('window:status', w));
+    this.runner.on('window:log', (w) => handler('window:log', w));
+    this.runner.on('window:dismissed', (w) => handler('window:dismissed', w));
   }
 
   private forwardEvent(event: AgentEvent): void {
