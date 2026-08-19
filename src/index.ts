@@ -1,9 +1,40 @@
+// ============================================================================
+// CozanetOS Agent Framework — v0.2.0
+// @cozanet/agents
+// ============================================================================
+
+// Core types & infrastructure
 export * from './types';
 export * from './base/BaseAgent';
+export * from './AgentRegistry';
+export * from './AgentOrchestrator';
+
+// Core agents (v0.1.0 — upgraded)
 export * from './CEO/CEOAgent';
 export * from './Research/ResearchAgent';
 export * from './Coding/CodingAgent';
 export * from './Memory/MemoryAgent';
 export * from './Planner/PlannerAgent';
-export * from './AgentRegistry';
-export * from './AgentOrchestrator';
+
+// Extended agents (v0.2.0 — new)
+export * from './Learning/LearningAgent';
+export * from './Knowledge/KnowledgeAgent';
+export * from './Browser/BrowserAgent';
+export * from './Review/ReviewAgent';
+export * from './Testing/TestingAgent';
+export * from './Security/SecurityAgent';
+export * from './Vision/VisionAgent';
+export * from './CX7/CX7Agent';
+export * from './Device/DeviceAgent';
+export * from './API/APIAgent';
+export * from './Workflow/WorkflowAgent';
+export * from './Scheduler/SchedulerAgent';
+export * from './Email/EmailAgent';
+export * from './Documents/DocumentsAgent';
+export * from './Voice/VoiceAgent';
+export * from './Analytics/AnalyticsAgent';
+export * from './Database/DatabaseAgent';
+export * from './Integration/IntegrationAgent';
+
+// Automation & worker system (v0.2.0 — new)
+export * from './Automation/AutomationAgent';
