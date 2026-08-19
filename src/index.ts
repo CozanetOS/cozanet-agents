@@ -46,3 +46,6 @@ export * from './Integration/IntegrationAgent';
 
 // Automation & worker system (v0.2.0 — new)
 export * from './Automation/AutomationAgent';
+
+// Master Context — user's durable operating context (v0.2.0 — new)
+export * from './context/MasterContextLoader';
