@@ -1,11 +1,12 @@
 {
   "name": "@cozanet/agents",
-  "version": "0.1.0",
-  "description": "CozanetOS Core Agents Framework",
+  "version": "0.2.0",
+  "description": "CozanetOS Core Agents Framework — 23 specialized agents with automation, scheduling, monitoring, and backend integration",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "dev": "tsc --watch"
   },
   "dependencies": {
     "@cozanet/shared": "^0.1.0"
