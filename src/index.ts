@@ -66,3 +66,9 @@ export * from './skills/types';
 export * from './GitHub/GitHubAgent';
 export * from './GitHub/GitHubClient';
 export * from './GitHub/types';
+
+// Phase 4 — AEGIS Domain (v0.2.3 — new)
+export * from './AEGIS/AegisConstitution';
+export * from './AEGIS/AegisEngineer';
+export * from './AEGIS/SecurityChecker';
+export * from './AEGIS/types';
