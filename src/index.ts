@@ -12,6 +12,10 @@ export * from './AgentOrchestrator';
 // TaskRunner — visible command windows + background execution (v0.2.0 — new)
 export * from './Runner/types';
 export * from './Runner/TaskRunner';
+export * from './Runner/AutonomousRunner';
+
+// API Key Vault — secure credential management (v0.2.0 — new)
+export * from './Vault/APIKeyVault';
 
 // Core agents (v0.1.0 — upgraded)
 export * from './CEO/CEOAgent';

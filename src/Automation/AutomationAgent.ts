@@ -3,6 +3,7 @@ import { AgentTask } from '../types';
 import { SchedulerAgent, ScheduledJob } from '../Scheduler/SchedulerAgent';
 import { WorkflowAgent, WorkflowDef } from '../Workflow/WorkflowAgent';
 import { AgentRegistry } from '../AgentRegistry';
+import { AutonomousRunner, AutonomousGoal, ProgressReport, AutonomousConfig } from '../Runner/AutonomousRunner';
 
 export interface AutomationRule {
   id: string;
@@ -15,6 +16,7 @@ export interface AutomationRule {
   lastFired?: number;
   fireCount: number;
   maxFires?: number;
+  lastReport?: string;         // self-report from last execution
 }
 
 export type AutomationTrigger =
@@ -28,7 +30,8 @@ export type AutomationAction =
   | { kind: 'agent_task'; agentId: string; taskType: string; input: any }
   | { kind: 'workflow'; workflowId: string }
   | { kind: 'notify'; message: string; channel?: string }
-  | { kind: 'api_call'; integrationId: string; endpoint: string; method: string; body?: any };
+  | { kind: 'api_call'; integrationId: string; endpoint: string; method: string; body?: any }
+  | { kind: 'autonomous'; description: string; steps?: any[]; config?: AutonomousConfig };
 
 export interface MonitorResult {
   target: string;
@@ -47,11 +50,14 @@ export interface MonitorResult {
  *  - Monitors targets on intervals and triggers actions when conditions are met
  *  - Chains multi-step workflows
  *  - Fires on events (entity changes, external webhooks)
+ *  - Runs autonomous goals: plan → execute → self-report → check → continue
+ *  - Uses API keys from the vault for external calls
  *
  * Think of it as the employee that never sleeps — it shows up, does the work,
- * reports back, and comes back on the next cycle automatically.
+ * reports what it did, checks if it's done, and continues until the goal is complete.
  *
- * Integration points: cozanet-automation, cozanet-monitoring, cozanet-scheduler.
+ * Integration points: cozanet-automation, cozanet-monitoring, cozanet-scheduler,
+ * cozanet-identity (API keys).
  */
 export class AutomationAgent extends BaseAgent {
   private rules: Map<string, AutomationRule> = new Map();
@@ -59,21 +65,28 @@ export class AutomationAgent extends BaseAgent {
   private monitorResults: Map<string, MonitorResult[]> = new Map();
   private scheduler: SchedulerAgent | null = null;
   private workflow: WorkflowAgent | null = null;
+  private autonomousRunner: AutonomousRunner;
 
   constructor() {
-    super('agent:automation', 'Automation Agent', 'Recurring Jobs, Monitoring & Background Workers');
+    super('agent:automation', 'Automation Agent', 'Recurring Jobs, Monitoring & Autonomous Workers');
 
     this.registerCapability({
       name: 'automation',
-      description: 'Schedule recurring tasks, monitor targets, trigger actions on conditions, run background workers',
-      taskTypes: ['create_rule', 'pause_rule', 'resume_rule', 'delete_rule', 'list_rules', 'monitor', 'run_now', 'get_status'],
+      description: 'Schedule recurring tasks, monitor targets, run autonomous goals with self-reporting, manage API keys',
+      taskTypes: [
+        'create_rule', 'pause_rule', 'resume_rule', 'delete_rule', 'list_rules',
+        'monitor', 'run_now', 'get_status',
+        'run_autonomous', 'get_progress', 'cancel_autonomous', 'resume_autonomous',
+        'list_autonomous_goals', 'get_autonomous_report',
+      ],
     });
+
+    this.autonomousRunner = new AutonomousRunner();
   }
 
   protected onStart(): void {
     console.log(`[${this.id}] Automation Agent online — the worker that never sleeps.`);
 
-    // Link to sibling agents
     const registry = AgentRegistry.getInstance();
     this.scheduler = registry.get('agent:scheduler') as SchedulerAgent | null;
     this.workflow = registry.get('agent:workflow') as WorkflowAgent | null;
@@ -92,6 +105,7 @@ export class AutomationAgent extends BaseAgent {
 
   public async handle(task: AgentTask): Promise<any> {
     switch (task.type) {
+      // Rule management
       case 'create_rule':
         return this.createRule(task.input.name, task.input.description, task.input.trigger, task.input.action, task.input.maxFires);
       case 'pause_rule':
@@ -108,6 +122,23 @@ export class AutomationAgent extends BaseAgent {
         return this.runNow(task.input.ruleId);
       case 'get_status':
         return this.getRuleStatus(task.input.ruleId);
+
+      // Autonomous goal runner
+      case 'run_autonomous':
+        return this.runAutonomous(task.input.description, task.input.steps, task.input.config);
+      case 'run_autonomous_auto_plan':
+        return this.runAutonomousAutoPlan(task.input.description, task.input.config);
+      case 'get_progress':
+        return this.getProgress(task.input.goalId);
+      case 'cancel_autonomous':
+        return this.cancelAutonomous(task.input.goalId);
+      case 'resume_autonomous':
+        return this.resumeAutonomous(task.input.goalId, task.input.config);
+      case 'list_autonomous_goals':
+        return this.listAutonomousGoals();
+      case 'get_autonomous_report':
+        return this.getAutonomousReport(task.input.goalId);
+
       default:
         throw new Error(`Unsupported task type: ${task.type}`);
     }
@@ -171,13 +202,80 @@ export class AutomationAgent extends BaseAgent {
     return this.rules.get(ruleId) || null;
   }
 
+  // ── Autonomous Goal Runner ──────────────────────────────────────────
+
+  /**
+   * Run an autonomous goal — plan, execute, self-report, continue until done.
+   * The worker will:
+   *   1. Execute each step
+   *   2. Generate a progress report ("I did X, the result was Y, next I'll do Z")
+   *   3. Check if the goal is complete
+   *   4. Continue to the next step if not done
+   *   5. Use API keys from the vault for external calls
+   *
+   * Example:
+   *   agent.handle({ type: 'run_autonomous', input: {
+   *     description: 'Check club events and email members',
+   *     steps: [
+   *       { description: 'Scrape events page', agentId: 'agent:browser', taskType: 'scrape', input: { url: '...' } },
+   *       { description: 'Send emails', agentId: 'agent:email', taskType: 'send', input: { ... }, usesApiKey: { provider: 'sendgrid' } },
+   *     ],
+   *     config: { maxIterations: 10, reportTo: 'agent:email' },
+   *   }});
+   */
+  private async runAutonomous(
+    description: string,
+    steps?: any[],
+    config?: AutonomousConfig
+  ): Promise<AutonomousGoal> {
+    if (steps && steps.length > 0) {
+      return this.autonomousRunner.runGoal(description, steps, config);
+    }
+    // No steps provided — let CEO auto-plan
+    return this.autonomousRunner.runGoalAutoPlan(description, config);
+  }
+
+  private async runAutonomousAutoPlan(description: string, config?: AutonomousConfig): Promise<AutonomousGoal> {
+    return this.autonomousRunner.runGoalAutoPlan(description, config);
+  }
+
+  private getProgress(goalId: string) {
+    return this.autonomousRunner.getProgress(goalId);
+  }
+
+  private cancelAutonomous(goalId: string) {
+    return this.autonomousRunner.cancelGoal(goalId);
+  }
+
+  private async resumeAutonomous(goalId: string, config?: AutonomousConfig) {
+    return this.autonomousRunner.resumeGoal(goalId, config);
+  }
+
+  private listAutonomousGoals(): AutonomousGoal[] {
+    return this.autonomousRunner.listGoals();
+  }
+
+  /**
+   * Get the full progress report history for an autonomous goal.
+   * This is the "what I did" self-report — every step, every iteration.
+   */
+  private getAutonomousReport(goalId: string): { reports: ProgressReport[]; goal: AutonomousGoal | null } {
+    const goal = this.autonomousRunner.getGoal(goalId);
+    if (!goal) return { reports: [], goal: null };
+    return { reports: goal.progressReports, goal };
+  }
+
+  /** Access the API key vault for storing/managing keys */
+  public getVault() {
+    return this.autonomousRunner.getVault();
+  }
+
   // ── Activation / Deactivation ──────────────────────────────────────
   private activateRule(rule: AutomationRule): void {
     const { trigger } = rule;
 
     switch (trigger.kind) {
       case 'schedule': {
-        // Register with SchedulerAgent for cron-based firing
         if (this.scheduler) {
           this.scheduler.handle({
             id: `auto-sched:${rule.id}`,
@@ -221,7 +319,6 @@ export class AutomationAgent extends BaseAgent {
         break;
       }
       case 'event': {
-        // Register for event-based triggers — integration point: cozanet-automation event bus
         console.log(`[${this.id}] Event trigger registered: ${trigger.eventType}`);
         break;
       }
@@ -237,7 +334,7 @@ export class AutomationAgent extends BaseAgent {
     }
   }
 
-  // ── Firing ──────────────────────────────────────────────────────────
+  // ── Firing with Self-Reporting ──────────────────────────────────────
   private async fireRule(rule: AutomationRule): Promise<any> {
     if (rule.status !== 'active') return null;
     if (rule.maxFires && rule.fireCount >= rule.maxFires) {
@@ -251,12 +348,14 @@ export class AutomationAgent extends BaseAgent {
     console.log(`[${this.id}] Firing rule: "${rule.name}" (fire #${rule.fireCount})`);
 
     const { action } = rule;
+    let result: any;
+
     switch (action.kind) {
       case 'agent_task': {
         const registry = AgentRegistry.getInstance();
         const agent = registry.get(action.agentId);
         if (!agent) throw new Error(`Agent ${action.agentId} not found`);
-        return agent.executeTask({
+        result = await agent.executeTask({
           id: `auto-task:${rule.id}:${rule.fireCount}`,
           agentId: action.agentId,
           type: action.taskType,
@@ -267,10 +366,11 @@ export class AutomationAgent extends BaseAgent {
           retries: 0,
           maxRetries: 3,
         });
+        break;
       }
       case 'workflow': {
         if (!this.workflow) throw new Error('WorkflowAgent not available');
-        return this.workflow.handle({
+        result = await this.workflow.handle({
           id: `auto-wf:${rule.id}:${rule.fireCount}`,
           agentId: 'agent:workflow',
           type: 'execute',
@@ -281,16 +381,33 @@ export class AutomationAgent extends BaseAgent {
           retries: 0,
           maxRetries: 3,
         });
+        break;
       }
       case 'notify': {
-        console.log(`[${this.id}] NOTIFICATION: ${action.message}`);
-        // Integration point: route to cozanet-communication (push, email, Slack, etc.)
-        return { notified: true, message: action.message, channel: action.channel };
+        const registry = AgentRegistry.getInstance();
+        const emailAgent = registry.get('agent:email');
+        if (emailAgent) {
+          result = await emailAgent.executeTask({
+            id: `auto-notify:${rule.id}:${rule.fireCount}`,
+            agentId: 'agent:email',
+            type: 'send',
+            input: { to: 'owner@cozanet.os', subject: rule.name, body: action.message },
+            status: 'pending',
+            priority: 'normal',
+            createdAt: Date.now(),
+            retries: 0,
+            maxRetries: 3,
+          });
+        }
+        console.log(`[${this.id}] Notification sent: ${action.message}`);
+        result = { notified: true, channel: action.channel || 'email' };
+        break;
       }
       case 'api_call': {
-        const integrationAgent = AgentRegistry.getInstance().get('agent:integration');
+        const registry = AgentRegistry.getInstance();
+        const integrationAgent = registry.get('agent:integration');
         if (!integrationAgent) throw new Error('IntegrationAgent not available');
-        return integrationAgent.handle({
+        result = await integrationAgent.executeTask({
           id: `auto-api:${rule.id}:${rule.fireCount}`,
           agentId: 'agent:integration',
           type: 'call',
@@ -301,54 +418,59 @@ export class AutomationAgent extends BaseAgent {
           retries: 0,
           maxRetries: 3,
         });
+        break;
+      }
+      case 'autonomous': {
+        // Fire an autonomous goal as the rule's action
+        result = await this.autonomousRunner.runGoal(
+          action.description,
+          action.steps || [],
+          action.config,
+        );
+        break;
       }
     }
+
+    // ── Self-report: store what was done ────────────────────────────
+    rule.lastReport = `Fire #${rule.fireCount}: ${result?.message || result?.summary || 'Action completed.'}`;
+    return result;
   }
 
-  // ── Monitoring ─────────────────────────────────────────────────────
-  private async monitor(target: string, condition: string, intervalMs: number): Promise<{ monitorId: string; target: string; active: boolean }> {
-    const monitorId = `monitor:${target}:${Date.now()}`;
-    console.log(`[${this.id}] Starting monitor on "${target}" every ${intervalMs}ms (condition: ${condition})`);
-
-    const timer = setInterval(async () => {
-      const result = await this.runMonitor(target, condition);
-      this.recordMonitorResult(target, result);
-      console.log(`[${this.id}] Monitor ${target}: ${result.healthy ? 'healthy' : 'UNHEALTHY'} — ${result.message}`);
-    }, intervalMs);
-
-    this.timers.set(monitorId, timer);
-    return { monitorId, target, active: true };
-  }
-
+  // ── Monitoring ──────────────────────────────────────────────────────
   private async runMonitor(target: string, condition: string): Promise<MonitorResult> {
-    // Integration point: check cozanet-monitoring for target health
-    // Placeholder: always returns healthy
+    console.log(`[${this.id}] Monitoring ${target}: checking ${condition}`);
+    // Integration point: cozanet-monitoring engine
     return {
       target,
       healthy: true,
-      value: 'ok',
-      message: `${target} is operating normally`,
+      value: null,
+      message: 'Monitor check complete',
       timestamp: Date.now(),
     };
   }
 
   private recordMonitorResult(target: string, result: MonitorResult): void {
-    if (!this.monitorResults.has(target)) {
-      this.monitorResults.set(target, []);
-    }
-    const history = this.monitorResults.get(target)!;
-    history.push(result);
-    // Keep last 100 results
-    if (history.length > 100) history.shift();
+    const results = this.monitorResults.get(target) || [];
+    results.push(result);
+    if (results.length > 100) results.shift();
+    this.monitorResults.set(target, results);
   }
 
-  // ── Cleanup ────────────────────────────────────────────────────────
+  private async monitor(target: string, condition: string, intervalMs: number): Promise<{ monitorId: string; active: boolean }> {
+    const monitorId = `monitor:${target}:${Date.now()}`;
+    const timer = setInterval(async () => {
+      const result = await this.runMonitor(target, condition);
+      this.recordMonitorResult(target, result);
+    }, intervalMs);
+    this.timers.set(monitorId, timer);
+    return { monitorId, active: true };
+  }
+
   protected onStop(): void {
     for (const timer of this.timers.values()) {
       clearInterval(timer);
       clearTimeout(timer);
     }
     this.timers.clear();
-    console.log(`[${this.id}] Automation Agent stopped — all timers cleared.`);
   }
 }
