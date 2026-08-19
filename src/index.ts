@@ -61,3 +61,8 @@ export * from './approvals/ApprovalManager';
 export * from './approvals/types';
 export * from './skills/SkillRegistry';
 export * from './skills/types';
+
+// Phase 3 — GitHub Engine (v0.2.2 — new)
+export * from './GitHub/GitHubAgent';
+export * from './GitHub/GitHubClient';
+export * from './GitHub/types';
