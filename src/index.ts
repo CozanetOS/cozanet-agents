@@ -51,3 +51,13 @@ export * from './Automation/AutomationAgent';
 export * from './context/MasterContextLoader';
 export * from './context/ContextManager';
 export * from './context/ContextAwareAgent';
+
+// Phase 2 — Agent Runtime components (v0.2.1 — new)
+export * from './models/ModelAdapter';
+export * from './models/types';
+export * from './tools/ToolRegistry';
+export * from './tools/types';
+export * from './approvals/ApprovalManager';
+export * from './approvals/types';
+export * from './skills/SkillRegistry';
+export * from './skills/types';
