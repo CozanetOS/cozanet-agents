@@ -83,3 +83,23 @@ export * from './Automation/OpportunityPipeline';
 export * from './Automation/AutomationSchedules';
 export * from './Automation/AlertService';
 export * from './Automation/Phase6Types';
+
+// Phase 7 — Evaluation
+export * from './Evaluation/EvaluationSuite';
+export * from './Evaluation/RegressionMemory';
+export * from './Evaluation/AgentPerformanceTracker';
+export * from './Evaluation/Phase7Types';
+
+// Phase 8 — Remote Engineering
+export * from './RemoteEngineering/GitHubActionsConfig';
+export * from './RemoteEngineering/RemoteBuildRunner';
+export * from './RemoteEngineering/Phase8Types';
+
+// Phase 9 — Advanced Autonomy
+export { LongRunningTaskManager } from './Autonomy/LongRunningTaskManager';
+export type { LongRunningTask, Milestone, LongTaskStatus, AutonomyLevel, Checkpoint, FailureRecoveryState, PRPreparation, IntelligenceFeed, TaskState } from './Autonomy/Phase9Types';
+export { AutonomyClassifier, PRPreparationManager, ContinuousIntelligence } from './Autonomy/AdvancedAutonomy';
+
+// Phase 10 — Final Integration
+export { OperatingConstitution, SuccessCriteria, SystemReportGenerator } from './FinalIntegration/OperatingConstitution';
+export type { OperatingRule, SuccessCriterion, SystemReport } from './FinalIntegration/Phase10Types';
