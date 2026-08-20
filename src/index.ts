@@ -77,3 +77,9 @@ export * from './AEGIS/types';
 export * from './Intelligence/CozanetRadar';
 export * from './Intelligence/DailyBriefGenerator';
 export * from './Intelligence/types';
+
+// Phase 6 — Automation (v0.2.5 — new)
+export * from './Automation/OpportunityPipeline';
+export * from './Automation/AutomationSchedules';
+export * from './Automation/AlertService';
+export * from './Automation/Phase6Types';
