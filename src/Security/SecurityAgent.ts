@@ -65,24 +65,62 @@ export class SecurityAgent extends BaseAgent {
     return { logged: true, auditId: `audit:${Date.now()}` };
   }
 
-  private async encrypt(data: string, algorithm = 'aes-256-gcm'): Promise<{ encrypted: string; algorithm: string; iv: string }> {
-    console.log(`[${this.id}] Encrypting with ${algorithm}`);
-    return { encrypted: Buffer.from(data).toString('base64'), algorithm, iv: Math.random().toString(36).slice(2) };
+  private async encrypt(data: string, _algorithm = 'aes-256-gcm'): Promise<{ encrypted: string; algorithm: string; iv: string }> {
+    const crypto = require('crypto');
+    const key = crypto.scryptSync(
+      process.env.AEGIS_ENCRYPTION_KEY || 'default-dev-key-change-me',
+      'cozanet-salt',
+      32,
+    );
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(data, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const authTag = cipher.getAuthTag();
+    // Pack iv + authTag + ciphertext so decrypt can recover everything
+    const packed = Buffer.concat([iv, authTag, Buffer.from(encrypted, 'hex')]).toString('base64');
+    return { encrypted: packed, algorithm: 'aes-256-gcm', iv: iv.toString('hex') };
   }
 
-  private async decrypt(data: string, key: string): Promise<{ decrypted: string }> {
-    console.log(`[${this.id}] Decrypting data`);
-    return { decrypted: Buffer.from(data, 'base64').toString() };
+  private async decrypt(packedData: string, _key: string): Promise<{ decrypted: string }> {
+    const crypto = require('crypto');
+    const key = crypto.scryptSync(
+      process.env.AEGIS_ENCRYPTION_KEY || 'default-dev-key-change-me',
+      'cozanet-salt',
+      32,
+    );
+    const packed = Buffer.from(packedData, 'base64');
+    const iv = packed.subarray(0, 12);
+    const authTag = packed.subarray(12, 28);
+    const ciphertext = packed.subarray(28);
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext, undefined, 'utf8');
+    decrypted += decipher.final('utf8');
+    return { decrypted };
   }
 
   private async checkPermissions(userId: string, resource: string, action: string): Promise<{ allowed: boolean; reason: string }> {
     console.log(`[${this.id}] Permission check: ${userId} → ${action} on ${resource}`);
-    return { allowed: true, reason: 'User has required role' };
+    // TODO: Wire to Identity Engine for real RBAC. For now, deny by default
+    // unless the action is a known-safe read operation.
+    const safeActions = ['read', 'list', 'view', 'scan'];
+    if (safeActions.includes(action)) {
+      return { allowed: true, reason: `Read-only action '${action}' permitted` };
+    }
+    return { allowed: false, reason: `Action '${action}' requires explicit Identity Engine authorization` };
   }
 
-  private async rotateKeys(service: string): Promise<{ service: string; rotated: boolean; newKeyId: string }> {
+  private async rotateKeys(service: string): Promise<{ service: string; rotated: boolean; newKeyId: string; error?: string }> {
     console.log(`[${this.id}] Rotating keys for ${service}`);
-    return { service, rotated: true, newKeyId: `key:${Date.now()}` };
+    // Key rotation is a production operation — require a real vault/KMS backend.
+    // Until the Vault Engine is wired, refuse to fake it.
+    return {
+      service,
+      rotated: false,
+      newKeyId: '',
+      error: 'Key rotation requires Vault Engine integration — not yet wired. Refusing to fake a rotation.',
+    };
   }
 
   // ── Domain Context (v0.2.0 — lazy loading: Security + AEGIS (wallet security)) ────────────────
