@@ -28,8 +28,13 @@ export class MasterContextLoader {
    */
   static load(): string {
     if (this.cache) return this.cache;
-    this.cache = fs.readFileSync(CONTEXT_FILE, 'utf-8');
-    this.parseSections(this.cache);
+    try {
+      this.cache = fs.readFileSync(CONTEXT_FILE, 'utf-8');
+      this.parseSections(this.cache);
+    } catch {
+      this.cache = '';
+      this.parsed.clear();
+    }
     return this.cache;
   }
 

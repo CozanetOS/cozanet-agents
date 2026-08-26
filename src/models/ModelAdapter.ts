@@ -93,6 +93,8 @@ export class ModelAdapter {
   // ── Generation with smart fallback ──────────────────────────────────
   async generate(messages: ChatMessage[], options?: CompletionOptions): Promise<CompletionResult> {
     const errors: string[] = [];
+    const MAX_RETRIES_PER_PROVIDER = 2;
+    const RETRY_DELAY_MS = 5000; // 5s backoff before retrying a 429'd provider
 
     for (const name of this.priority) {
       // Skip providers that are cooling down
@@ -105,27 +107,40 @@ export class ModelAdapter {
         continue;
       }
 
-      try {
-        const result = await provider.generateCompletion(messages, options);
-        this.recordSuccess(name);
+      // Try up to MAX_RETRIES_PER_PROVIDER times per provider
+      for (let attempt = 0; attempt <= MAX_RETRIES_PER_PROVIDER; attempt++) {
+        try {
+          const result = await provider.generateCompletion(messages, options);
+          this.recordSuccess(name);
 
-        // Clear cooldown on success — provider is healthy
-        this.cooldowns.delete(name);
+          // Clear cooldown on success — provider is healthy
+          this.cooldowns.delete(name);
 
-        return result;
-      } catch (err: any) {
-        const msg = err.message || String(err);
-        this.recordFailure(name, msg);
+          return result;
+        } catch (err: any) {
+          const msg = err.message || String(err);
+          const isRateLimit = err.status === 429 || msg.includes('429') || msg.includes('rate limit');
 
-        // 429 = rate limited → set cooldown
-        if (err.status === 429 || msg.includes('429') || msg.includes('rate limit')) {
-          this.setCooldown(name, COOLDOWN_MS);
-          console.warn(`[ModelAdapter] ${name} rate limited — cooling down for ${COOLDOWN_MS / 1000}s`);
-        } else {
-          console.warn(`[ModelAdapter] ${name} failed: ${msg.slice(0, 100)}`);
+          if (isRateLimit && attempt < MAX_RETRIES_PER_PROVIDER) {
+            // Brief backoff before retrying same provider
+            console.warn(`[ModelAdapter] ${name} rate limited (attempt ${attempt + 1}/${MAX_RETRIES_PER_PROVIDER + 1}) — retrying in ${RETRY_DELAY_MS / 1000}s`);
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            continue;
+          }
+
+          // Exhausted retries or non-rate-limit error
+          this.recordFailure(name, msg);
+
+          if (isRateLimit) {
+            this.setCooldown(name, COOLDOWN_MS);
+            console.warn(`[ModelAdapter] ${name} rate limited — cooling down for ${COOLDOWN_MS / 1000}s`);
+          } else {
+            console.warn(`[ModelAdapter] ${name} failed: ${msg.slice(0, 100)}`);
+          }
+
+          errors.push(`${name}: ${msg.slice(0, 150)}`);
+          break; // Move to next provider
         }
-
-        errors.push(`${name}: ${msg.slice(0, 150)}`);
       }
     }
 
