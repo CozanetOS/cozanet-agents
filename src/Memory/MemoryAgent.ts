@@ -1,6 +1,8 @@
 import { BaseAgent } from '../base/BaseAgent';
 import { AgentTask } from '../types';
 import { ContextManager } from '../context/ContextManager';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface MemoryStoreResult {
   key: string;
@@ -42,10 +44,12 @@ export interface MemoryEntry {
  */
 export class MemoryAgent extends BaseAgent {
   private localCache: Map<string, MemoryEntry> = new Map();
-  private maxHotEntries = 1000; // hot tier max — LRU eviction to warm
+  private maxHotEntries = 1000;
+  private dataDir: string; // hot tier max — LRU eviction to warm
 
   constructor() {
     super('agent:memory', 'Memory Agent', 'Short-term and Long-term retrieval');
+    this.dataDir = path.join(process.cwd(), 'data', 'memory');
 
     this.registerCapability({
       name: 'memory',
@@ -55,7 +59,9 @@ export class MemoryAgent extends BaseAgent {
   }
 
   protected onStart(): void {
-    console.log(`[${this.id}] Memory Agent online — managing multi-tier memory.`);
+    if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    this.load();
+    console.log(`[${this.id}] Memory Agent online — ${this.localCache.size} entries loaded.`);
   }
 
   public async handle(task: AgentTask): Promise<any> {
@@ -95,6 +101,7 @@ export class MemoryAgent extends BaseAgent {
     };
 
     this.localCache.set(key, entry);
+    this.save();
 
     // Auto-consolidate hot tier if it's too full
     if (tier === 'hot' && this.localCache.size > this.maxHotEntries) {
@@ -169,6 +176,7 @@ export class MemoryAgent extends BaseAgent {
   private async forget(key: string, reason?: string): Promise<{ key: string; forgotten: boolean; reason?: string }> {
     console.log(`[${this.id}] Forgetting key "${key}"${reason ? ` (reason: ${reason})` : ''}`);
     const deleted = this.localCache.delete(key);
+    if (deleted) this.save();
     return { key, forgotten: deleted, reason };
   }
 
@@ -189,6 +197,7 @@ export class MemoryAgent extends BaseAgent {
         failed++;
       }
     }
+    this.save();
     return { stored, failed };
   }
 
@@ -239,6 +248,7 @@ export class MemoryAgent extends BaseAgent {
       }
     }
 
+    if (count > 0) this.save();
     return { consolidated: count, from, to };
   }
 
@@ -278,6 +288,7 @@ export class MemoryAgent extends BaseAgent {
         count++;
       }
     }
+    this.save();
     return { cleared: count, tier };
   }
 
@@ -299,6 +310,26 @@ export class MemoryAgent extends BaseAgent {
       totalAccesses: entries.reduce((sum, e) => sum + e.accessCount, 0),
       mostAccessed: mostAccessed ? { key: mostAccessed.key, accessCount: mostAccessed.accessCount } : null,
     };
+  }
+
+
+  // ── Persistence ─────────────────────────────────────────────────────
+
+  private save(): void {
+    if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    const data = Array.from(this.localCache.values());
+    fs.writeFileSync(path.join(this.dataDir, 'memory.json'), JSON.stringify(data, null, 2));
+  }
+
+  private load(): void {
+    const filePath = path.join(this.dataDir, 'memory.json');
+    if (!fs.existsSync(filePath)) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      for (const entry of data) {
+        this.localCache.set(entry.key, entry);
+      }
+    } catch { /* start fresh */ }
   }
 
   // ── Domain Context (v0.2.0 — lazy loading: Personal domain (identity/decisions)) ────────────────

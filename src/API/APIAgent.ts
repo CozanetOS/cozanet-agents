@@ -129,12 +129,76 @@ export class APIAgent extends BaseAgent {
     const tokensUsed = { input: Math.ceil(prompt.length / 4), output: options?.maxTokens || 100 };
     const cost = (tokensUsed.input / 1000) * info.costPer1k.input + (tokensUsed.output / 1000) * info.costPer1k.output;
 
+    // Make real API call to provider
+    let response: any;
+    let actualOutputTokens = options?.maxTokens || 100;
+
+    try {
+      const providerUrls: Record<string, string> = {
+        openai: 'https://api.openai.com/v1/chat/completions',
+        groq: 'https://api.groq.com/openai/v1/chat/completions',
+        anthropic: 'https://api.anthropic.com/v1/messages',
+        openrouter: 'https://openrouter.ai/api/v1/chat/completions',
+      };
+
+      const apiUrl = providerUrls[provider.toLowerCase()];
+      if (!apiUrl) {
+        throw new Error(`Unknown provider URL for: ${provider}`);
+      }
+
+      const isAnthropic = provider.toLowerCase() === 'anthropic';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (isAnthropic) {
+        headers['x-api-key'] = key.keyPrefix; // In production, use decrypted full key
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers['Authorization'] = `Bearer ${key.keyPrefix}`;
+      }
+
+      const apiBody = isAnthropic ? {
+        model,
+        max_tokens: options?.maxTokens || 100,
+        messages: [{ role: 'user', content: prompt }],
+      } : {
+        model,
+        max_tokens: options?.maxTokens || 100,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: options?.temperature ?? 0.7,
+      };
+
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(apiBody),
+      });
+
+      if (res.ok) {
+        const data: any = await res.json();
+        response = data;
+        // Extract actual token usage if available
+        if (data.usage?.completion_tokens) {
+          actualOutputTokens = data.usage.completion_tokens;
+          tokensUsed.output = actualOutputTokens;
+        }
+      } else {
+        const errorText = await res.text().catch(() => 'Unknown error');
+        response = { error: true, status: res.status, message: errorText };
+      }
+    } catch (err: any) {
+      response = { error: true, message: err.message };
+    }
+
+    const actualCost = (tokensUsed.input / 1000) * info.costPer1k.input + (tokensUsed.output / 1000) * info.costPer1k.output;
+
     const result: APICallResult = {
       provider,
       model,
-      response: `Response from ${model} for: ${prompt.slice(0, 100)}`,
+      response,
       tokensUsed,
-      cost,
+      cost: actualCost,
       latencyMs: Date.now() - startTime,
       apiKeyId: key.id,
     };

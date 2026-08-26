@@ -5,6 +5,8 @@ import { WorkflowAgent, WorkflowDef } from '../Workflow/WorkflowAgent';
 import { AgentRegistry } from '../AgentRegistry';
 import { AutonomousRunner, AutonomousGoal, ProgressReport, AutonomousConfig } from '../Runner/AutonomousRunner';
 import { ContextManager } from '../context/ContextManager';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface AutomationRule {
   id: string;
@@ -63,6 +65,7 @@ export interface MonitorResult {
 export class AutomationAgent extends BaseAgent {
   private rules: Map<string, AutomationRule> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
+  private dataDir: string = '';
   private monitorResults: Map<string, MonitorResult[]> = new Map();
   private scheduler: SchedulerAgent | null = null;
   private workflow: WorkflowAgent | null = null;
@@ -163,6 +166,7 @@ export class AutomationAgent extends BaseAgent {
     };
     this.rules.set(rule.id, rule);
     this.activateRule(rule);
+    this.save();
     console.log(`[${this.id}] Created automation rule: "${name}" (trigger: ${trigger.kind})`);
     return rule;
   }
@@ -172,6 +176,7 @@ export class AutomationAgent extends BaseAgent {
     if (!rule) return { ruleId, paused: false };
     rule.status = 'paused';
     this.deactivateRule(ruleId);
+    this.save();
     return { ruleId, paused: true };
   }
 
@@ -180,11 +185,13 @@ export class AutomationAgent extends BaseAgent {
     if (!rule) return { ruleId, resumed: false };
     rule.status = 'active';
     this.activateRule(rule);
+    this.save();
     return { ruleId, resumed: true };
   }
 
   private async deleteRule(ruleId: string): Promise<{ ruleId: string; deleted: boolean }> {
     this.deactivateRule(ruleId);
+    this.save();
     return { ruleId, deleted: this.rules.delete(ruleId) };
   }
 
@@ -465,6 +472,29 @@ export class AutomationAgent extends BaseAgent {
     }, intervalMs);
     this.timers.set(monitorId, timer);
     return { monitorId, active: true };
+  }
+
+
+  // ── Persistence ─────────────────────────────────────────────────────
+
+  private save(): void {
+    if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    const data = Array.from(this.rules.values());
+    fs.writeFileSync(path.join(this.dataDir, 'rules.json'), JSON.stringify(data, null, 2));
+  }
+
+  private load(): void {
+    const filePath = path.join(this.dataDir, 'rules.json');
+    if (!fs.existsSync(filePath)) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      for (const rule of data) {
+        this.rules.set(rule.id, rule);
+        if (rule.status === 'active') {
+          this.activateRule(rule);
+        }
+      }
+    } catch { /* start fresh */ }
   }
 
   protected onStop(): void {
