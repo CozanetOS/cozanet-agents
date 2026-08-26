@@ -1,174 +1,46 @@
-import { ChatMessage, CompletionOptions, CompletionResult, ModelInfo, ModelProvider, ProviderName } from './types';
-
-// ── Provider stubs ────────────────────────────────────────────────────
-// Each provider has realistic structure but returns mock data when no
-// API key is set. When keys ARE set, they would call the real API.
-
-class GroqProvider implements ModelProvider {
-  readonly name = 'groq' as const;
-
-  isAvailable(): boolean {
-    return true; // Groq has a free tier; always attempt
-  }
-
-  getModels(): ModelInfo[] {
-    return [
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', contextWindow: 128000 },
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', contextWindow: 128000 },
-      { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', contextWindow: 32768 },
-    ];
-  }
-
-  async generateCompletion(messages: ChatMessage[], options?: CompletionOptions): Promise<CompletionResult> {
-    const start = Date.now();
-    const model = options?.model ?? 'llama-3.3-70b-versatile';
-    const apiKey = process.env.GROQ_API_KEY;
-
-    if (!apiKey) {
-      return {
-        text: `[groq:stub] No GROQ_API_KEY set. Would have called ${model} with ${messages.length} messages.`,
-        provider: 'groq',
-        model,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        latencyMs: Date.now() - start,
-      };
-    }
-
-    // Real call would go here:
-    // const res = await fetch('https://api.groq.com/openai/v1/chat/completions', { ... })
-    throw new Error('Groq API call not yet implemented — set up the HTTP client');
-  }
-
-  async generateEmbedding(_text: string): Promise<number[]> {
-    return [];
-  }
-}
-
-class OpenAIProvider implements ModelProvider {
-  readonly name = 'openai' as const;
-
-  isAvailable(): boolean {
-    return !!process.env.OPENAI_API_KEY;
-  }
-
-  getModels(): ModelInfo[] {
-    return [
-      { id: 'gpt-4o', name: 'GPT-4o', contextWindow: 128000 },
-      { id: 'gpt-4o-mini', name: 'GPT-4o mini', contextWindow: 128000 },
-      { id: 'o1-preview', name: 'o1 Preview', contextWindow: 128000 },
-    ];
-  }
-
-  async generateCompletion(messages: ChatMessage[], options?: CompletionOptions): Promise<CompletionResult> {
-    const start = Date.now();
-    const model = options?.model ?? 'gpt-4o-mini';
-    const apiKey = process.env.OPENAI_API_KEY;
-
-    if (!apiKey) {
-      return {
-        text: `[openai:stub] No OPENAI_API_KEY set.`,
-        provider: 'openai',
-        model,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        latencyMs: Date.now() - start,
-      };
-    }
-
-    throw new Error('OpenAI API call not yet implemented');
-  }
-
-  async generateEmbedding(_text: string): Promise<number[]> {
-    return [];
-  }
-}
-
-class AnthropicProvider implements ModelProvider {
-  readonly name = 'anthropic' as const;
-
-  isAvailable(): boolean {
-    return !!process.env.ANTHROPIC_API_KEY;
-  }
-
-  getModels(): ModelInfo[] {
-    return [
-      { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', contextWindow: 200000 },
-      { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', contextWindow: 200000 },
-    ];
-  }
-
-  async generateCompletion(messages: ChatMessage[], options?: CompletionOptions): Promise<CompletionResult> {
-    const start = Date.now();
-    const model = options?.model ?? 'claude-sonnet-4-20250514';
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-
-    if (!apiKey) {
-      return {
-        text: `[anthropic:stub] No ANTHROPIC_API_KEY set.`,
-        provider: 'anthropic',
-        model,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        latencyMs: Date.now() - start,
-      };
-    }
-
-    throw new Error('Anthropic API call not yet implemented');
-  }
-
-  async generateEmbedding(_text: string): Promise<number[]> {
-    return [];
-  }
-}
-
-class LocalProvider implements ModelProvider {
-  readonly name = 'local' as const;
-
-  isAvailable(): boolean {
-    return true; // Always available as fallback
-  }
-
-  getModels(): ModelInfo[] {
-    return [
-      { id: 'local-mock', name: 'Local Mock (Fallback)', contextWindow: 4096 },
-    ];
-  }
-
-  async generateCompletion(messages: ChatMessage[], _options?: CompletionOptions): Promise<CompletionResult> {
-    const start = Date.now();
-    const lastMessage = messages[messages.length - 1];
-
-    return {
-      text: `[local:fallback] Acknowledged: "${lastMessage?.content?.slice(0, 200) ?? ''}"`,
-      provider: 'local',
-      model: 'local-mock',
-      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-      latencyMs: Date.now() - start,
-    };
-  }
-
-  async generateEmbedding(_text: string): Promise<number[]> {
-    return [];
-  }
-}
-
 // ── ModelAdapter ──────────────────────────────────────────────────────
 //
 //  COZANET OS → AGENT RUNTIME → MODEL ADAPTER → MODEL PROVIDER
 //
 //  The provider is replaceable. The system remains useful if a provider
 //  changes pricing, limits, or availability.
+//
+//  v0.3.0 — Real implementations. All providers now make actual API calls.
+//  Fallback chain respects rate-limit cooldowns (don't retry a 429'd key
+//  for 60s). Tool calling supported across all OpenAI-compatible providers
+//  and Anthropic.
+
+import {
+  ChatMessage, CompletionOptions, CompletionResult,
+  KeyHealth, ModelInfo, ModelProvider, ProviderName,
+} from './types';
+import { createProviders } from './providers';
+
+// Default provider priority — free first, paid as fallback
+// Provider priority — ordered by cost (free first) and reliability.
+// GitHub Models is being retired (410 brownout) — removed from chain.
+// Providers with no API key are automatically skipped by isAvailable().
+const DEFAULT_PRIORITY: ProviderName[] = [
+  'groq',        // Free tier, fastest inference
+  'openrouter',  // Free models (openrouter/free auto-routes to available)
+  'openai',      // Paid (if key set)
+  'anthropic',   // Paid (if key set)
+  'github',      // Deprecated (retirement in progress) — kept for when it's back
+  'local',       // Last resort fallback
+];
+
+const COOLDOWN_MS = 60_000; // 60s cooldown after a 429
 
 export class ModelAdapter {
   private static instance: ModelAdapter | null = null;
-  private providers: Map<ProviderName, ModelProvider> = new Map();
-  private primaryProvider: ProviderName = 'groq';
-  private fallbackChain: ProviderName[] = ['openai', 'anthropic', 'local'];
+  private providers: Map<ProviderName, ModelProvider>;
+  private priority: ProviderName[];
+  private cooldowns: Map<ProviderName, number> = new Map();
+  private stats: Map<ProviderName, { calls: number; successes: number; failures: number; lastError?: string }> = new Map();
 
   private constructor() {
-    // Register all providers
-    this.registerProvider('groq', new GroqProvider());
-    this.registerProvider('openai', new OpenAIProvider());
-    this.registerProvider('anthropic', new AnthropicProvider());
-    this.registerProvider('local', new LocalProvider());
+    this.providers = createProviders();
+    this.priority = [...DEFAULT_PRIORITY];
   }
 
   static getInstance(): ModelAdapter {
@@ -184,85 +56,144 @@ export class ModelAdapter {
     console.log(`[ModelAdapter] Registered provider: ${name} (available: ${provider.isAvailable()})`);
   }
 
-  // ── Retrieval ──────────────────────────────────────────────────────
-  getProvider(name?: ProviderName): ModelProvider | null {
-    if (name) {
-      return this.providers.get(name) ?? null;
-    }
-    // Return primary if available, otherwise walk fallback chain
-    const primary = this.providers.get(this.primaryProvider);
-    if (primary?.isAvailable()) return primary;
-
-    for (const fallback of this.fallbackChain) {
-      const p = this.providers.get(fallback);
-      if (p?.isAvailable()) return p;
-    }
-    return null;
-  }
-
   // ── Configuration ───────────────────────────────────────────────────
-  setPrimaryProvider(name: ProviderName): void {
-    if (!this.providers.has(name)) {
-      throw new Error(`Provider "${name}" not registered`);
-    }
-    this.primaryProvider = name;
-    console.log(`[ModelAdapter] Primary provider set to: ${name}`);
+  setPriority(chain: ProviderName[]): void {
+    this.priority = chain;
   }
 
-  setFallbackChain(chain: ProviderName[]): void {
-    this.fallbackChain = chain;
+  getPriority(): ProviderName[] {
+    return [...this.priority];
   }
 
-  // ── Generation ─────────────────────────────────────────────────────
+  // ── Cooldown Management ────────────────────────────────────────────
+  private isCoolingDown(provider: ProviderName): boolean {
+    const until = this.cooldowns.get(provider);
+    return !!until && Date.now() < until;
+  }
+
+  private setCooldown(provider: ProviderName, ms: number = COOLDOWN_MS): void {
+    this.cooldowns.set(provider, Date.now() + ms);
+  }
+
+  private recordSuccess(provider: ProviderName): void {
+    const s = this.stats.get(provider) || { calls: 0, successes: 0, failures: 0 };
+    s.calls++;
+    s.successes++;
+    this.stats.set(provider, s);
+  }
+
+  private recordFailure(provider: ProviderName, error?: string): void {
+    const s = this.stats.get(provider) || { calls: 0, successes: 0, failures: 0 };
+    s.calls++;
+    s.failures++;
+    s.lastError = error;
+    this.stats.set(provider, s);
+  }
+
+  // ── Generation with smart fallback ──────────────────────────────────
   async generate(messages: ChatMessage[], options?: CompletionOptions): Promise<CompletionResult> {
-    // Try primary provider
-    const primary = this.getProvider(this.primaryProvider);
-    if (primary?.isAvailable()) {
-      try {
-        return await primary.generateCompletion(messages, options);
-      } catch (err) {
-        console.warn(`[ModelAdapter] Primary provider "${this.primaryProvider}" failed: ${(err as Error).message}`);
-      }
-    }
+    const errors: string[] = [];
+    const MAX_RETRIES_PER_PROVIDER = 2;
+    const RETRY_DELAY_MS = 5000; // 5s backoff before retrying a 429'd provider
 
-    // Walk fallback chain
-    for (const fallbackName of this.fallbackChain) {
-      const provider = this.providers.get(fallbackName);
-      if (provider?.isAvailable()) {
+    for (const name of this.priority) {
+      // Skip providers that are cooling down
+      if (this.isCoolingDown(name)) {
+        continue;
+      }
+
+      const provider = this.providers.get(name);
+      if (!provider || !provider.isAvailable()) {
+        continue;
+      }
+
+      // Try up to MAX_RETRIES_PER_PROVIDER times per provider
+      for (let attempt = 0; attempt <= MAX_RETRIES_PER_PROVIDER; attempt++) {
         try {
-          console.log(`[ModelAdapter] Falling back to: ${fallbackName}`);
-          return await provider.generateCompletion(messages, options);
-        } catch (err) {
-          console.warn(`[ModelAdapter] Fallback "${fallbackName}" failed: ${(err as Error).message}`);
+          const result = await provider.generateCompletion(messages, options);
+          this.recordSuccess(name);
+
+          // Clear cooldown on success — provider is healthy
+          this.cooldowns.delete(name);
+
+          return result;
+        } catch (err: any) {
+          const msg = err.message || String(err);
+          const isRateLimit = err.status === 429 || msg.includes('429') || msg.includes('rate limit');
+
+          if (isRateLimit && attempt < MAX_RETRIES_PER_PROVIDER) {
+            // Brief backoff before retrying same provider
+            console.warn(`[ModelAdapter] ${name} rate limited (attempt ${attempt + 1}/${MAX_RETRIES_PER_PROVIDER + 1}) — retrying in ${RETRY_DELAY_MS / 1000}s`);
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            continue;
+          }
+
+          // Exhausted retries or non-rate-limit error
+          this.recordFailure(name, msg);
+
+          if (isRateLimit) {
+            this.setCooldown(name, COOLDOWN_MS);
+            console.warn(`[ModelAdapter] ${name} rate limited — cooling down for ${COOLDOWN_MS / 1000}s`);
+          } else {
+            console.warn(`[ModelAdapter] ${name} failed: ${msg.slice(0, 100)}`);
+          }
+
+          errors.push(`${name}: ${msg.slice(0, 150)}`);
+          break; // Move to next provider
         }
       }
     }
 
-    // Last resort: local mock
-    const local = this.providers.get('local');
-    if (local) {
-      return local.generateCompletion(messages, options);
-    }
-
-    throw new Error('No model providers available');
+    // All providers exhausted — throw with full diagnostic
+    throw new Error(
+      `All providers exhausted. Errors:\n${errors.map(e => `  - ${e}`).join('\n')}`
+    );
   }
 
+  // ── Embeddings ──────────────────────────────────────────────────────
   async embed(text: string): Promise<number[]> {
-    const provider = this.getProvider();
-    if (!provider) throw new Error('No provider available for embeddings');
-    return provider.generateEmbedding(text);
+    for (const name of this.priority) {
+      if (this.isCoolingDown(name)) continue;
+      const provider = this.providers.get(name);
+      if (!provider?.isAvailable()) continue;
+      try {
+        const embedding = await provider.generateEmbedding(text);
+        if (embedding.length > 0) return embedding;
+      } catch (err) {
+        console.warn(`[ModelAdapter] ${name} embedding failed: ${(err as Error).message}`);
+      }
+    }
+    return [];
   }
 
   // ── Introspection ──────────────────────────────────────────────────
-  listProviders(): { name: ProviderName; available: boolean; models: ModelInfo[] }[] {
-    return Array.from(this.providers.entries()).map(([name, provider]) => ({
-      name,
-      available: provider.isAvailable(),
-      models: provider.getModels(),
-    }));
+  listProviders(): { name: ProviderName; available: boolean; coolingDown: boolean; models: ModelInfo[] }[] {
+    return this.priority.map(name => {
+      const provider = this.providers.get(name);
+      return {
+        name,
+        available: provider?.isAvailable() ?? false,
+        coolingDown: this.isCoolingDown(name),
+        models: provider?.getModels() ?? [],
+      };
+    });
+  }
+
+  getStats(): Record<string, { calls: number; successes: number; failures: number; lastError?: string }> {
+    const out: any = {};
+    for (const [name, stats] of this.stats) {
+      out[name] = stats;
+    }
+    return out;
   }
 
   getPrimaryProvider(): ProviderName {
-    return this.primaryProvider;
+    // Return the first available, non-cooling-down provider
+    for (const name of this.priority) {
+      if (this.isCoolingDown(name)) continue;
+      const provider = this.providers.get(name);
+      if (provider?.isAvailable()) return name;
+    }
+    return 'local';
   }
 }

@@ -263,22 +263,49 @@ export class TaskRunner extends EventEmitter {
     this.appendLog(windowId, 'info', `$ ${command}`);
 
     try {
-      // Integration point: route to cozanet-automation command executor
-      // For now, simulate command execution with status updates
-      this.appendLog(windowId, 'stdout', `Executing: ${command}`, 'runner');
+      // Real shell execution via child_process
+      const { exec } = await import('child_process');
+      const cwd = process.cwd();
+      const timeoutMs = options?.timeoutMs ?? 30000;
 
-      // Check for cancellation
-      if (this.isCancelled(windowId)) {
-        return null;
+      if (this.isCancelled(windowId)) return null;
+
+      const result = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve, reject) => {
+        const proc = exec(command, {
+          cwd,
+          timeout: timeoutMs,
+          maxBuffer: 1024 * 1024, // 1MB
+        }, (err, stdout, stderr) => {
+          if (err && !stdout) {
+            resolve({ stdout: '', stderr: stderr || err.message, exitCode: Number(err.code) || 1 });
+          } else {
+            resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: Number(err?.code) || 0 });
+          }
+        });
+
+        // Stream stdout in real-time
+        if (proc.stdout) {
+          proc.stdout.on('data', (data: Buffer) => {
+            this.appendLog(windowId, 'stdout', data.toString().trim(), 'shell');
+          });
+        }
+        if (proc.stderr) {
+          proc.stderr.on('data', (data: Buffer) => {
+            this.appendLog(windowId, 'stderr', data.toString().trim(), 'shell');
+          });
+        }
+      });
+
+      if (result.exitCode === 0) {
+        this.appendLog(windowId, 'success', `Command completed (exit ${result.exitCode})`, 'runner');
+        this.setStatus(windowId, 'done');
+      } else {
+        this.appendLog(windowId, 'error', `Command failed (exit ${result.exitCode})`, 'runner');
+        this.setStatus(windowId, 'failed');
       }
 
-      // Simulate command output streaming
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      this.appendLog(windowId, 'success', 'Command completed.', 'runner');
-      this.setStatus(windowId, 'done');
       this.finishWindow(windowId, options);
-      return { command, exitCode: 0 };
+      return { command, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr };
     } catch (err: any) {
       this.appendLog(windowId, 'error', err.message, 'runner');
       this.setStatus(windowId, 'failed');
