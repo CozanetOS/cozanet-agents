@@ -225,11 +225,55 @@ export class APIAgent extends BaseAgent {
   }
 
   private async route(prompt: string, requirements?: { maxLatency?: number; maxCost?: number; minQuality?: string }): Promise<{ provider: string; model: string; reason: string }> {
-    const groq = this.providers.get('groq');
-    if (groq?.available) return { provider: 'groq', model: groq.models[0], reason: 'Free tier, low latency' };
-    const openai = this.providers.get('openai');
-    if (openai?.available) return { provider: 'openai', model: openai.models[1], reason: 'Available, cost-effective' };
-    return { provider: 'none', model: 'none', reason: 'No providers available' };
+    const available = Array.from(this.providers.values()).filter(p => p.available);
+    if (available.length === 0) return { provider: 'none', model: 'none', reason: 'No providers available' };
+
+    // Score each provider based on requirements
+    const scored = available.map(p => {
+      let score = 0;
+      const reasons: string[] = [];
+
+      // Cost scoring (lower cost = higher score)
+      const totalCost = p.costPer1k.input + p.costPer1k.output;
+      if (requirements?.maxCost && totalCost <= requirements.maxCost) {
+        score += 30;
+        reasons.push('within cost budget');
+      } else if (totalCost === 0) {
+        score += 40;
+        reasons.push('free tier');
+      } else if (totalCost < 0.01) {
+        score += 25;
+        reasons.push('low cost');
+      }
+
+      // Latency scoring (lower rate limit = potentially slower)
+      if (requirements?.maxLatency) {
+        score += Math.min(p.rateLimit / 10, 20);
+        reasons.push('good throughput');
+      }
+
+      // Quality scoring (more models = better quality options)
+      if (requirements?.minQuality === 'high' && p.models.length > 2) {
+        score += 20;
+        reasons.push('high quality models');
+      }
+
+      // Default: prefer free/cheap providers
+      if (!requirements) {
+        if (totalCost === 0) score += 50;
+        score += p.models.length * 5;
+      }
+
+      return { provider: p, score, reasons };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    return {
+      provider: best.provider.name,
+      model: best.provider.models[0],
+      reason: best.reasons.join(', ') || 'best available option',
+    };
   }
 
   // ── API Key Vault Management ────────────────────────────────────────
