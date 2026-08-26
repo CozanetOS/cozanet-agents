@@ -279,7 +279,7 @@ export class AutonomousRunner {
           action: step.description,
           result,
           status: 'success',
-          message: this.generateReport(step, result),
+          message: await this.generateReport(step, result),
           timestamp: Date.now(),
           nextAction: this.getNextAction(goal, step),
           goalComplete: this.checkGoalComplete(goal),
@@ -378,7 +378,33 @@ export class AutonomousRunner {
    * Generate a human-readable report of what was done.
    * "I checked the club calendar. Found 3 upcoming events. Next I'll email all members."
    */
-  private generateReport(step: AutonomousStep, result: any): string {
+  private async generateReport(step: AutonomousStep, result: any): Promise<string> {
+    // Try LLM-powered report generation for natural language summaries
+    try {
+      const { ModelAdapter } = await import('../models/ModelAdapter');
+      const adapter = ModelAdapter.getInstance();
+
+      const resultStr = typeof result === 'string' ? result : JSON.stringify(result).slice(0, 1000);
+
+      const llmResult = await adapter.generate([
+        {
+          role: 'system',
+          content: 'You are a progress reporter for an autonomous agent system. Given a step description and its result, write a one-sentence natural language summary of what was accomplished. Be specific about the actual outcome. Do not use markdown.',
+        },
+        {
+          role: 'user',
+          content: `Step: ${step.description}\nResult: ${resultStr}`,
+        },
+      ], { maxTokens: 100, temperature: 0.3 });
+
+      if (llmResult.text && !llmResult.text.startsWith('[local:fallback]')) {
+        return llmResult.text.trim();
+      }
+    } catch {
+      // Fall through to template
+    }
+
+    // Fallback: template-based summary
     const resultSummary = this.summarizeResult(result);
     return `I ${step.description.toLowerCase()}. ${resultSummary}`;
   }
