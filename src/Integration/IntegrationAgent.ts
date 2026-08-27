@@ -226,7 +226,7 @@ export class IntegrationAgent extends BaseAgent {
     const integ = this.integrations.get(integrationId);
     if (!integ) return { integrationId, webhookId: '', registered: false };
 
-    const webhookId = `hook_${crypto.createHash('md5').update(url + events.join(',')).digest('hex').slice(0, 12)}`;
+    const webhookId = `hook_${crypto.createHash("sha256").update(url + events.join(",")).digest('hex').slice(0, 12)}`;
 
     if (!integ.webhooks) integ.webhooks = [];
     integ.webhooks.push({ id: webhookId, url, events, createdAt: Date.now() });

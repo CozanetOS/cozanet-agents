@@ -223,7 +223,7 @@ export class SecurityAgent extends BaseAgent {
     console.log(`[${this.id}] Encrypting ${data.length} bytes with AES-256-GCM`);
 
     const key = this.getOrCreateKey(keyId);
-    const iv = crypto.randomBytes(16); // GCM uses 12-byte IV, but 16 is fine for legacy
+    const iv = crypto.randomBytes(12); // AES-GCM standard IV size
     const cipher = crypto.createCipheriv(SecurityAgent.ENCRYPTION_ALGO, key, iv);
 
     let encrypted = cipher.update(data, 'utf8', 'base64');
@@ -264,7 +264,7 @@ export class SecurityAgent extends BaseAgent {
       keyBuffer = this.getOrCreateKey();
     }
 
-    const ivBuffer = iv ? Buffer.from(iv, 'base64') : crypto.randomBytes(16);
+    const ivBuffer = iv ? Buffer.from(iv, 'base64') : crypto.randomBytes(12);
     const authTagBuffer = authTag ? Buffer.from(authTag, 'base64') : Buffer.alloc(16);
 
     const decipher = crypto.createDecipheriv(SecurityAgent.ENCRYPTION_ALGO, keyBuffer, ivBuffer);

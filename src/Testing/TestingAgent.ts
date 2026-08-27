@@ -379,17 +379,27 @@ console.log(JSON.stringify({ avgMs: avg, minMs: min, maxMs: max, iterations: ${i
     return 'jest';
   }
 
+
+  /**
+   * Sanitize a file path to prevent command injection.
+   * Strips shell metacharacters and allows only safe path characters.
+   */
+  private sanitizePath(p: string): string {
+    // Allow alphanumeric, /, ., _, -, \ (Windows paths)
+    return p.replace(/[;|&`$(){}\[\]!#~<>\n\r'"\\]/g, '').trim();
+  }
+
   private buildTestCommand(framework: string, testPath: string): string {
     switch (framework) {
       case 'vitest':
-        return `npx vitest run ${testPath} --reporter=verbose 2>&1`;
+        return `npx vitest run ${this.sanitizePath(testPath)} --reporter=verbose 2>&1`;
       case 'mocha':
-        return `npx mocha ${testPath} --reporter spec 2>&1`;
+        return `npx mocha ${this.sanitizePath(testPath)} --reporter spec 2>&1`;
       case 'pytest':
-        return `python -m pytest ${testPath} -v 2>&1`;
+        return `python -m pytest ${this.sanitizePath(testPath)} -v 2>&1`;
       case 'jest':
       default:
-        return `npx jest ${testPath} --verbose 2>&1`;
+        return `npx jest ${this.sanitizePath(testPath)} --verbose 2>&1`;
     }
   }
 

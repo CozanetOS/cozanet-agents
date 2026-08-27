@@ -255,6 +255,11 @@ export class TaskRunner extends EventEmitter {
 
   // ── Internal: Execution ───────────────────────────────────────────
 
+  /**
+   * SECURITY: This method executes arbitrary shell commands.
+   * Commands must only come from trusted agent task input, never raw user input.
+   * The AgentOrchestrator authorization layer must approve before reaching here.
+   */
   private async executeCommand(windowId: string, command: string, options?: RunOptions): Promise<any> {
     const win = this.windows.get(windowId);
     if (!win) return;
