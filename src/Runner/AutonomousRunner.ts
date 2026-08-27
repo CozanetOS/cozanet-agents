@@ -2,6 +2,8 @@
 // AutonomousRunner — Self-reporting goal execution loop
 // ============================================================================
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { AgentRegistry } from '../AgentRegistry';
 import { AgentTask, TaskResult } from '../types';
 import { APIKeyVault } from '../Vault/APIKeyVault';
@@ -84,10 +86,36 @@ export class AutonomousRunner {
   private registry: AgentRegistry;
   private vault: APIKeyVault;
   private cancelled: Set<string> = new Set();
+  private dataDir: string;
 
-  constructor(registry?: AgentRegistry) {
+  constructor(registry?: AgentRegistry, dataDir?: string) {
     this.registry = registry || AgentRegistry.getInstance();
     this.vault = new APIKeyVault();
+    this.dataDir = dataDir || (typeof process !== 'undefined' && process.cwd ? path.join(process.cwd(), 'data', 'autonomous') : '/tmp/cozanet-autonomous');
+    this.loadGoals();
+  }
+
+  // ── Persistence ─────────────────────────────────────────────────
+  private saveGoals(): void {
+    try {
+      if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+      const data = Array.from(this.goals.values());
+      fs.writeFileSync(path.join(this.dataDir, 'goals.json'), JSON.stringify(data, null, 2));
+    } catch (e) { /* don't crash on save errors */ }
+  }
+
+  private loadGoals(): void {
+    try {
+      const filePath = path.join(this.dataDir, 'goals.json');
+      if (!fs.existsSync(filePath)) return;
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      for (const goal of data) {
+        // Don't auto-resume running goals — they need explicit resume
+        if (goal.status === 'running') goal.status = 'paused';
+        this.goals.set(goal.id, goal);
+      }
+      console.log(`[AutonomousRunner] Loaded ${this.goals.size} goals from disk.`);
+    } catch { /* start fresh */ }
   }
 
   /** Access the vault directly (for storing/managing keys) */
@@ -133,9 +161,11 @@ export class AutonomousRunner {
     };
 
     this.goals.set(goalId, goal);
+    this.saveGoals();
 
     // Run the loop
     await this.executeLoop(goal, config);
+    this.saveGoals();
 
     return goal;
   }
@@ -506,6 +536,7 @@ export class AutonomousRunner {
     const goal = this.goals.get(goalId);
     if (!goal) return { cancelled: false, goalId };
     this.cancelled.add(goalId);
+    this.saveGoals();
     goal.status = 'cancelled';
     return { cancelled: true, goalId };
   }

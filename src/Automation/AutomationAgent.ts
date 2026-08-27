@@ -65,7 +65,7 @@ export interface MonitorResult {
 export class AutomationAgent extends BaseAgent {
   private rules: Map<string, AutomationRule> = new Map();
   private timers: Map<string, NodeJS.Timeout> = new Map();
-  private dataDir: string = '';
+  private dataDir: string = path.join(process.cwd(), 'data', 'automation');
   private monitorResults: Map<string, MonitorResult[]> = new Map();
   private scheduler: SchedulerAgent | null = null;
   private workflow: WorkflowAgent | null = null;
@@ -90,6 +90,14 @@ export class AutomationAgent extends BaseAgent {
 
   protected onStart(): void {
     console.log(`[${this.id}] Automation Agent online — the worker that never sleeps.`);
+
+    // Ensure data directory exists and load persisted state
+    if (this.dataDir && !fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    if (this.dataDir) {
+      this.load();
+      this.loadGoals();
+    }
+    console.log(`[${this.id}] Loaded ${this.rules.size} rules from disk.`);
 
     const registry = AgentRegistry.getInstance();
     this.scheduler = registry.get('agent:scheduler') as SchedulerAgent | null;
@@ -231,20 +239,43 @@ export class AutomationAgent extends BaseAgent {
    *     config: { maxIterations: 10, reportTo: 'agent:email' },
    *   }});
    */
+  private saveGoals(): void {
+    if (!this.dataDir) return;
+    if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
+    const goals = this.autonomousRunner.listGoals();
+    fs.writeFileSync(path.join(this.dataDir, 'goals.json'), JSON.stringify(goals, null, 2));
+  }
+
+  private loadGoals(): void {
+    const filePath = path.join(this.dataDir, 'goals.json');
+    if (!fs.existsSync(filePath)) return;
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      // Goals are loaded as snapshots — they can be resumed but not auto-restarted
+      console.log(`[${this.id}] Loaded ${data.length} autonomous goal snapshots from disk.`);
+    } catch { /* start fresh */ }
+  }
+
   private async runAutonomous(
     description: string,
     steps?: any[],
     config?: AutonomousConfig
   ): Promise<AutonomousGoal> {
     if (steps && steps.length > 0) {
-      return this.autonomousRunner.runGoal(description, steps, config);
+      const goal = await this.autonomousRunner.runGoal(description, steps, config);
+    this.saveGoals();
+    return goal;
     }
     // No steps provided — let CEO auto-plan
-    return this.autonomousRunner.runGoalAutoPlan(description, config);
+    const goal = await this.autonomousRunner.runGoalAutoPlan(description, config);
+    this.saveGoals();
+    return goal;
   }
 
   private async runAutonomousAutoPlan(description: string, config?: AutonomousConfig): Promise<AutonomousGoal> {
-    return this.autonomousRunner.runGoalAutoPlan(description, config);
+    const goal = await this.autonomousRunner.runGoalAutoPlan(description, config);
+    this.saveGoals();
+    return goal;
   }
 
   private getProgress(goalId: string) {
