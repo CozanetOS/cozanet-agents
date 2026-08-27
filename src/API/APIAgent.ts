@@ -68,7 +68,7 @@ export class APIAgent extends BaseAgent {
       case 'call':
         return this.call(task.input.provider, task.input.model, task.input.prompt, task.input.options);
       case 'register_provider':
-        return this.registerProvider(task.input.provider);
+        return this.registerProvider(task.input.provider || task.input);
       case 'list_providers':
         return this.listProviders();
       case 'estimate_cost':

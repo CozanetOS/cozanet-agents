@@ -145,6 +145,7 @@ Be honest about confidence — if you cannot actually hear audio, set confidence
       createdAt: Date.now(),
       format: 'wav',
     };
+    if (!fs.existsSync(this.audioDir)) fs.mkdirSync(this.audioDir, { recursive: true });
     fs.writeFileSync(filepath + '.json', JSON.stringify(metadata, null, 2));
 
     const duration = text.length / 15; // ~15 chars per second

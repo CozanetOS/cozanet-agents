@@ -478,6 +478,7 @@ export class AutomationAgent extends BaseAgent {
   // ── Persistence ─────────────────────────────────────────────────────
 
   private save(): void {
+    if (!this.dataDir) return;
     if (!fs.existsSync(this.dataDir)) fs.mkdirSync(this.dataDir, { recursive: true });
     const data = Array.from(this.rules.values());
     fs.writeFileSync(path.join(this.dataDir, 'rules.json'), JSON.stringify(data, null, 2));
